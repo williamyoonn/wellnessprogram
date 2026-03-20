@@ -407,10 +407,18 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
       </div>
     </div>
     <div class="frow">
-      <div class="fgroup"><label class="flabel">Current Location · 현재 위치</label><input class="finput" id="c_location" type="text" placeholder="e.g. Seoul Medical Center"></div>
-      <div class="fgroup"><label class="flabel">Breakfast / Meal This Morning · 아침 식사</label><input class="finput" id="c_breakfast" type="text" placeholder="e.g. Rice and soup / 밥과 국"></div>
+      <div class="fgroup">
+        <label class="flabel">Current Location · 현재 위치</label>
+        <input class="finput" id="c_location" type="text" placeholder="e.g. Seoul Medical Center or 서울 의료 센터">
+      </div>
+      <div class="fgroup">
+        <label class="flabel">Breakfast / Meal This Morning · 아침 식사</label>
+        <input class="finput" id="c_breakfast" type="text" placeholder="e.g. Rice and soup or 밥과 국">
+      </div>
     </div>
-    <div class="frow x1">
+    <div style="background:rgba(77,159,255,.05);border:1px solid rgba(77,159,255,.15);border-radius:var(--r-sm);padding:10px 14px;margin-bottom:14px;font-size:.75rem;color:var(--muted)">
+      &#9432; &nbsp;You can enter expected answers in <strong style="color:var(--text)">English or Korean</strong> — the system will match both. For example, entering "rice" will accept "밥" from the patient.
+    </div>
       <div class="fgroup"><label class="flabel">What the patient mentioned today · 오늘 환자가 말한 것</label><textarea class="ftextarea" id="c_notes" placeholder="e.g. mentioned their daughter visited, said they feel tired..."></textarea></div>
     </div>
     <div class="frow x1">
@@ -450,6 +458,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
     <div class="q-actions">
       <button class="btn btn-ghost" onclick="skipQ()">Skip · 건너뛰기</button>
       <button class="btn btn-primary" onclick="submitAnswer()">Submit &#8594; <span style="font-family:'Noto Serif KR',serif;font-size:.9em">제출</span></button>
+      <button class="btn" style="background:rgba(240,168,50,.15);color:var(--gold);border:1px solid rgba(240,168,50,.3);font-size:.78rem" onclick="bypassQ()" title="Mark as correct and continue">&#10003; Bypass</button>
     </div>
   </div>
 </div>
@@ -826,35 +835,122 @@ function submitAnswer(){
   showFeedback(res.correct,answer,res.reason);
 }
 function skipQ(){results.push({q:lang==='ko'?Qs[qIdx].ko:Qs[qIdx].en,answer:'—',correct:'skip',reason:''});nextQ();}
+function bypassQ(){
+  // Caretaker override — marks as correct regardless of answer
+  var q=Qs[qIdx];
+  var inp=document.getElementById('qInput');
+  var answer=inp?inp.value.trim():'';
+  if(!answer) answer=lang==='ko'?'(보호자 확인)':'(caretaker verified)';
+  score++;
+  results.push({q:lang==='ko'?q.ko:q.en,answer:answer,correct:true,reason:lang==='ko'?'보호자가 정답으로 확인했습니다.':'Marked correct by caretaker.'});
+  showFeedback(true,answer,lang==='ko'?'보호자가 정답으로 확인했습니다.':'Marked correct by caretaker.');
+}
 
 function evaluate(q,userRaw){
   var user=userRaw.trim();
   if(!q.expected) return {correct:null,reason:lang==='ko'?'자유 응답으로 기록되었습니다.':'Open-ended — recorded.'};
+
+  // ── Cross-language translation map ──
+  // Allows caretaker to enter English, patient to answer Korean (and vice versa)
+  var XLATE = [
+    // times of day
+    ['morning','아침'],['afternoon','오후'],['evening','저녁'],['night','밤'],
+    // days
+    ['monday','월요일'],['tuesday','화요일'],['wednesday','수요일'],
+    ['thursday','목요일'],['friday','금요일'],['saturday','토요일'],['sunday','일요일'],
+    // common foods
+    ['rice','밥'],['soup','국'],['rice and soup','밥과 국'],['bread','빵'],
+    ['egg','달걀'],['eggs','달걀'],['noodles','국수'],['porridge','죽'],
+    ['kimchi','김치'],['fish','생선'],['chicken','닭'],['beef','소고기'],
+    ['pork','돼지고기'],['salad','샐러드'],['fruit','과일'],['cereal','시리얼'],
+    ['coffee','커피'],['tea','차'],['juice','주스'],['water','물'],
+    ['tofu','두부'],['vegetables','채소'],
+    // common names / titles
+    ['doctor','의사'],['nurse','간호사'],['hospital','병원'],['clinic','의원'],
+    ['home','집'],['house','집'],['center','센터'],
+    // common answers
+    ['yes','네'],['no','아니요'],['okay','네'],
+    // numbers written out
+    ['one','일'],['two','이'],['three','삼'],['four','사'],['five','오'],
+    ['six','육'],['seven','칠'],['eight','팔'],['nine','구'],['ten','십'],
+  ];
+
+  function normalizeForCompare(s) {
+    var lower = s.toLowerCase().trim();
+    // Try to find a translation in both directions
+    for(var i=0;i<XLATE.length;i++){
+      var en = XLATE[i][0].toLowerCase();
+      var ko = XLATE[i][1];
+      if(lower === en) return ko; // return Korean canonical form
+      if(lower === ko) return ko;
+      if(lower.includes(en)) lower = lower.replace(en, ko);
+    }
+    return lower;
+  }
+
+  // Time of day check — accepts both languages
   if(q.timeKey){
     var enC=['Morning','Afternoon','Evening','Night'],koC=['아침','오후','저녁','밤'],tK=['morning','afternoon','evening','night'];
-    var ei=tK.indexOf(q.timeKey),src=lang==='ko'?koC:enC;
-    var gi=src.findIndex(function(c){return c.toLowerCase()===user.toLowerCase();});
-    if(gi<0) return {correct:false,reason:'No match for time.'};
-    return gi===ei?{correct:true,reason:lang==='ko'?'시간대가 정확히 일치합니다.':'Time of day matches.'}:{correct:false,reason:lang==='ko'?'시간대가 일치하지 않습니다.':'Time of day does not match.'};
+    var ei=tK.indexOf(q.timeKey);
+    // check against both EN and KO lists
+    var allC = enC.concat(koC);
+    var allIdx = enC.map(function(_,i){return i;}).concat(koC.map(function(_,i){return i;}));
+    for(var i=0;i<allC.length;i++){
+      if(allC[i].toLowerCase()===user.toLowerCase()){
+        var matched = i < enC.length ? i : i - enC.length;
+        return matched===ei
+          ? {correct:true, reason:lang==='ko'?'시간대가 정확히 일치합니다.':'Time of day matches.'}
+          : {correct:false,reason:lang==='ko'?'시간대가 일치하지 않습니다.':'Time of day does not match.'};
+      }
+    }
+    return {correct:false,reason:'No match for time.'};
   }
+
+  // Day of week — accepts both languages
   if(q.dayCheck&&q.expected){
     var days=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
     var dKo=['월요일','화요일','수요일','목요일','금요일','토요일','일요일'];
     var eL=q.expected.toLowerCase(),uL=user.toLowerCase();
     var eD=days.findIndex(function(d){return eL.includes(d);}),eK=dKo.findIndex(function(d){return eL.includes(d);});
     var uD=days.findIndex(function(d){return uL.includes(d);}),uK=dKo.findIndex(function(d){return uL.includes(d);});
-    var ei2=eD>=0?eD:eK,ui=uD>=0?uD:uK;
-    if(ei2>=0&&ui>=0) return ui===ei2?{correct:true,reason:lang==='ko'?'요일이 정확합니다.':'Day is correct.'}:{correct:false,reason:lang==='ko'?'요일이 맞지 않습니다.':'Day does not match.'};
+    var ei2=eD>=0?eD:eK, ui=uD>=0?uD:uK;
+    if(ei2>=0&&ui>=0) return ui===ei2
+      ? {correct:true, reason:lang==='ko'?'요일이 정확합니다.':'Day is correct.'}
+      : {correct:false,reason:lang==='ko'?'요일이 맞지 않습니다.':'Day does not match.'};
   }
-  var exp=q.expected.toLowerCase().trim(),usr=user.toLowerCase().trim();
-  if(usr===exp||usr.includes(exp)||exp.includes(usr)) return {correct:true,reason:lang==='ko'?'답변이 일치합니다.':'Answer matches.'};
+
+  var exp = q.expected.toLowerCase().trim();
+  var usr = user.toLowerCase().trim();
+
+  // Direct match
+  if(usr===exp||usr.includes(exp)||exp.includes(usr))
+    return {correct:true,reason:lang==='ko'?'답변이 일치합니다.':'Answer matches.'};
+
+  // Cross-language normalized match
+  var expN = normalizeForCompare(exp);
+  var usrN = normalizeForCompare(usr);
+  if(usrN===expN||usrN.includes(expN)||expN.includes(usrN))
+    return {correct:true,reason:lang==='ko'?'언어가 달라도 같은 의미입니다.':'Same meaning across languages — accepted.'};
+
+  // Token overlap (cross-language aware)
   var eT=tokenize(exp),uT=tokenize(usr);
-  var ov=eT.filter(function(t){return uT.some(function(u){return u===t||levSim(t,u)>.78;});});
-  if(eT.length>0&&ov.length/eT.length>=0.5) return {correct:true,reason:lang==='ko'?'부분적으로 일치합니다.':'Partial match — accepted.'};
-  if(levSim(exp,usr)>=0.62) return {correct:true,reason:lang==='ko'?'유사한 답변입니다.':'Close enough — accepted.'};
+  var eTN=eT.map(normalizeForCompare), uTN=uT.map(normalizeForCompare);
+  var ov=eTN.filter(function(t){return uTN.some(function(u){return u===t||levSim(t,u)>.78;});});
+  if(eT.length>0&&ov.length/eT.length>=0.5)
+    return {correct:true,reason:lang==='ko'?'부분적으로 일치합니다.':'Partial match — accepted.'};
+
+  // Edit distance
+  if(levSim(exp,usr)>=0.62)
+    return {correct:true,reason:lang==='ko'?'유사한 답변입니다.':'Close enough — accepted.'};
+  if(levSim(expN,usrN)>=0.62)
+    return {correct:true,reason:lang==='ko'?'번역 후 유사한 답변입니다.':'Close match after translation — accepted.'};
+
+  // Number match
   var eN=exp.match(/\d+/g)||[],uN=usr.match(/\d+/g)||[];
-  if(eN.length&&uN.some(function(n){return eN.includes(n);})) return {correct:true,reason:lang==='ko'?'숫자가 일치합니다.':'Number matches.'};
-  return {correct:false,reason:lang==='ko'?'답변이 기대와 다릅니다.':'Answer does not match.'};
+  if(eN.length&&uN.some(function(n){return eN.includes(n);}))
+    return {correct:true,reason:lang==='ko'?'숫자가 일치합니다.':'Number matches.'};
+
+  return {correct:false,reason:lang==='ko'?'답변이 기대와 다릅니다.':'Answer does not match expected response.'};
 }
 function tokenize(s){return s.split(/[\s,\-\/|。、]+/).filter(function(t){return t.length>1;});}
 function levSim(a,b){
