@@ -570,6 +570,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   <div class="wf-result-card hidden" id="wfResult">
     <div class="wf-score-big" id="wfScoreBig">0/0</div>
     <div class="wf-score-label" id="wfScoreLabel">words correctly identified</div>
+    <div id="wfPtsEarned" style="font-size:.78rem;color:var(--gold);font-weight:600;margin:4px 0 12px;min-height:18px"></div>
     <div class="wf-word-pills" id="wfPills"></div>
     <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:8px">
       <span style="font-size:.78rem;color:var(--muted)"><span class="wf-pill hit" style="padding:2px 8px">&#10003;</span> Recalled</span>
@@ -614,6 +615,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   <div class="wf-result-card hidden" id="sfResult">
     <div class="wf-score-big" id="sfScoreBig">0/0</div>
     <div class="wf-score-label" id="sfScoreLabel">images correctly identified</div>
+    <div id="sfPtsEarned" style="font-size:.78rem;color:var(--gold);font-weight:600;margin:4px 0 12px;min-height:18px"></div>
     <div class="sf-result-grid" id="sfResultPills"></div>
     <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:20px;margin-bottom:8px">
       <span style="font-size:.78rem;color:var(--muted)"><span class="wf-pill hit" style="padding:2px 8px">&#10003;</span> Recalled</span>
@@ -755,9 +757,18 @@ function getQTier(q) {
   return 'med';
 }
 
-// Compute total possible points from current Qs array
+// Points config for memory flash tests
+var WF_PTS_PER_HIT = 2;    // per word correctly recalled (10 words = 20pts max)
+var WF_PTS_FALSE_ALARM = 1; // deducted per false alarm
+var SF_PTS_PER_HIT = 2.5;  // per shape correctly recalled (8 shapes = 20pts max)
+var SF_PTS_FALSE_ALARM = 1; // deducted per false alarm
+
+// Compute total possible points from current Qs array + flash tests
 function getTotalPossiblePts(){
-  return Qs.reduce(function(acc,q){ return acc + getQPoints(q); }, 0);
+  var qTotal = Qs.reduce(function(acc,q){ return acc + getQPoints(q); }, 0);
+  var wfTotal = WF_SHOWN.length > 0 ? WF_SHOWN.length * WF_PTS_PER_HIT : 0;
+  var sfTotal = SF_SHOWN.length > 0 ? Math.round(SF_SHOWN.length * SF_PTS_PER_HIT) : 0;
+  return qTotal + wfTotal + sfTotal;
 }
 
 // Weighted score (raw points earned)
@@ -1172,6 +1183,11 @@ function submitWfRecall(){
   var misses=WF_SHOWN.filter(function(w){return sel.indexOf(w)<0;});
   var fas=sel.filter(function(w){return WF_SHOWN.indexOf(w)<0;});
   WF_RESULT={hits:hits,misses:misses,falseAlarms:fas,total:WF_SHOWN.length,score:hits.length};
+  // Add to weighted score: +2pts per hit, -1pt per false alarm (floor 0)
+  var wfEarned = Math.max(0, hits.length * WF_PTS_PER_HIT - fas.length * WF_PTS_FALSE_ALARM);
+  WF_RESULT.ptsEarned = wfEarned;
+  WF_RESULT.ptsMax = WF_SHOWN.length * WF_PTS_PER_HIT;
+  weightedScore += wfEarned;
   document.getElementById('wfRecall').classList.add('hidden');
   var res=document.getElementById('wfResult');res.classList.remove('hidden');
   res.style.animation='none';res.offsetHeight;res.style.animation='cardIn .42s cubic-bezier(.34,1.15,.64,1) both';
@@ -1179,6 +1195,9 @@ function submitWfRecall(){
   var se=document.getElementById('wfScoreBig');se.textContent=hits.length+'/'+WF_SHOWN.length;
   se.style.color=pct>=80?'var(--green)':pct>=50?'var(--gold)':'var(--red)';
   document.getElementById('wfScoreLabel').textContent=lang==='ko'?(WF_SHOWN.length+'개 중 '+hits.length+'개를 정확히 기억했습니다'+(fas.length?' · 잘못된 선택: '+fas.length+'개':'')):(hits.length+' of '+WF_SHOWN.length+' words recalled'+(fas.length?' · '+fas.length+' false alarm'+(fas.length!==1?'s':''):''));
+  // Show pts earned
+  var wfPtsEl=document.getElementById('wfPtsEarned');
+  if(wfPtsEl) wfPtsEl.textContent='+'+wfEarned+'pts earned ('+wfEarned+'/'+WF_RESULT.ptsMax+'pts'+(fas.length?' · -'+fas.length+'pt'+(fas.length>1?'s':'')+' false alarm':'')+')';
   var pills=document.getElementById('wfPills');pills.innerHTML='';
   WF_SHOWN.forEach(function(w){var p=document.createElement('span');p.className='wf-pill '+(hits.indexOf(w)>=0?'hit':'miss');p.textContent=(hits.indexOf(w)>=0?'✓ ':'✗ ')+w;pills.appendChild(p);});
   fas.forEach(function(w){var p=document.createElement('span');p.className='wf-pill false-alarm';p.textContent='! '+w;pills.appendChild(p);});
@@ -1257,6 +1276,11 @@ function submitSfRecall(){
   var faIds=sel.filter(function(id){return shownIds.indexOf(id)<0;});
   var faItems=SF_ITEMS.filter(function(i){return faIds.indexOf(i.id)>=0;});
   SF_RESULT={hits:hits,misses:misses,falseAlarms:faItems,total:SF_SHOWN.length,score:hits.length};
+  // Add to weighted score: +2.5pts per hit, -1pt per false alarm (floor 0)
+  var sfEarned = Math.max(0, Math.round(hits.length * SF_PTS_PER_HIT - faItems.length * SF_PTS_FALSE_ALARM));
+  SF_RESULT.ptsEarned = sfEarned;
+  SF_RESULT.ptsMax = Math.round(SF_SHOWN.length * SF_PTS_PER_HIT);
+  weightedScore += sfEarned;
   document.getElementById('sfRecall').classList.add('hidden');
   var res=document.getElementById('sfResult');res.classList.remove('hidden');
   res.style.animation='none';res.offsetHeight;res.style.animation='cardIn .42s cubic-bezier(.34,1.15,.64,1) both';
@@ -1264,6 +1288,9 @@ function submitSfRecall(){
   var se=document.getElementById('sfScoreBig');se.textContent=hits.length+'/'+SF_SHOWN.length;
   se.style.color=pct>=80?'var(--green)':pct>=50?'var(--gold)':'var(--red)';
   document.getElementById('sfScoreLabel').textContent=lang==='ko'?(SF_SHOWN.length+'개 중 '+hits.length+'개를 정확히 기억했습니다'):(hits.length+' of '+SF_SHOWN.length+' images recalled');
+  // Show pts earned
+  var sfPtsEl=document.getElementById('sfPtsEarned');
+  if(sfPtsEl) sfPtsEl.textContent='+'+sfEarned+'pts earned ('+sfEarned+'/'+SF_RESULT.ptsMax+'pts'+(faItems.length?' · -'+faItems.length+'pt'+(faItems.length>1?'s':'')+' false alarm':'')+')';
   var pills=document.getElementById('sfResultPills');pills.innerHTML='';
   SF_SHOWN.forEach(function(item){
     var isHit=hits.indexOf(item)>=0;
@@ -1315,7 +1342,8 @@ function _showScoreInner(){
     (cls==='ok'?'var(--green-dim)':cls==='no'?'var(--red-dim)':'var(--gold-dim)')+';color:'+(cls==='ok'?'var(--green)':cls==='no'?'var(--red)':'var(--gold)')+'">'+pre+' '+w+'</span>';}
   if(WF_RESULT){
     var wfPct=Math.round(WF_RESULT.score/WF_RESULT.total*100),wfCol=wfPct>=80?'var(--green)':wfPct>=50?'var(--gold)':'var(--red)';
-    bk.innerHTML+='<div class="fsec-title" style="margin:22px 0 14px">'+(lang==='ko'?'단어 기억력 테스트':'Word Memory Test')+'</div>'
+    bk.innerHTML+='<div class="fsec-title" style="margin:22px 0 14px">'+(lang==='ko'?'단어 기억력 테스트':'Word Memory Test')
+      +'<span style="float:right;font-size:.75rem;font-weight:400;color:var(--gold)">+'+WF_RESULT.ptsEarned+'/'+WF_RESULT.ptsMax+'pts</span></div>'
       +'<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r-sm);padding:16px 18px">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
       +'<span style="font-size:.82rem;color:var(--muted)">'+(lang==='ko'?'기억한 단어':'Words recalled')+'</span>'
@@ -1327,7 +1355,8 @@ function _showScoreInner(){
   }
   if(SF_RESULT){
     var sfPct=Math.round(SF_RESULT.score/SF_RESULT.total*100),sfCol=sfPct>=80?'var(--green)':sfPct>=50?'var(--gold)':'var(--red)';
-    bk.innerHTML+='<div class="fsec-title" style="margin:22px 0 14px">'+(lang==='ko'?'도형 및 동물 기억력 테스트':'Shape & Animal Memory Test')+'</div>'
+    bk.innerHTML+='<div class="fsec-title" style="margin:22px 0 14px">'+(lang==='ko'?'도형 및 동물 기억력 테스트':'Shape & Animal Memory Test')
+      +'<span style="float:right;font-size:.75rem;font-weight:400;color:var(--gold)">+'+SF_RESULT.ptsEarned+'/'+SF_RESULT.ptsMax+'pts</span></div>'
       +'<div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--r-sm);padding:16px 18px">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
       +'<span style="font-size:.82rem;color:var(--muted)">'+(lang==='ko'?'기억한 그림':'Images recalled')+'</span>'
